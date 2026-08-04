@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: #020617;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #334155;
+  border-radius: 999px;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-indigo-500 to-indigo-600 px-5 py-2.5 font-medium text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-indigo-500 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700/80 bg-slate-900/60 px-5 py-2.5 font-medium text-slate-200 backdrop-blur transition hover:border-slate-600 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .card {
+    @apply rounded-2xl border border-slate-800/80 bg-slate-900/50 p-6 shadow-xl shadow-black/20 backdrop-blur-sm;
+  }
+  .input-field {
+    @apply w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-4 py-2.5 text-slate-100 placeholder-slate-500 transition focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500;
+  }
+  .section-label {
+    @apply mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300;
+  }
+}
+
+@keyframes pulse-fast {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.85;
+  }
+}
+
+@keyframes pulse-slow {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.6;
+  }
+}
+
+@keyframes float-blob {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(30px, -20px) scale(1.05);
+  }
+}
+
+.animate-pulse-fast {
+  animation: pulse-fast 0.9s ease-in-out infinite;
+}
+.animate-pulse-slow {
+  animation: pulse-slow 2.4s ease-in-out infinite;
+}
+.animate-float-blob {
+  animation: float-blob 12s ease-in-out infinite;
+}

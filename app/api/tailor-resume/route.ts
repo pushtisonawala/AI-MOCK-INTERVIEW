@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateJSON } from "@/lib/gemini";
+import { generateJSON } from "@/lib/ai";
 import { resumeTailorPrompt } from "@/lib/prompts";
 import { SessionSetup, TailoredResume } from "@/lib/types";
 

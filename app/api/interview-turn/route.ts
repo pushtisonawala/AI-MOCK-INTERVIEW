@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateJSON } from "@/lib/gemini";
+import { generateJSON } from "@/lib/ai";
 import { interviewTurnPrompt } from "@/lib/prompts";
 import { SessionSetup, PlannedQuestion, TranscriptTurn, InterviewTurnResponse } from "@/lib/types";
 

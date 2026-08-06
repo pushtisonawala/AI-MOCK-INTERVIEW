@@ -3,16 +3,21 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { sessionStore } from "@/lib/session-store";
-import { findVoiceByName } from "@/lib/voice";
-import { PlannedQuestion, SessionSetup, TranscriptTurn, InterviewTurnResponse } from "@/lib/types";
+import { findVoiceByName, resolveVoiceName } from "@/lib/voice";
+import { PlannedQuestion, SessionSetup, TranscriptTurn, InterviewTurnResponse, Persona, PANEL_PERSONAS } from "@/lib/types";
 import AIOrb from "@/components/AIOrb";
 import MicLevel from "@/components/MicLevel";
 import ChatTranscript from "@/components/ChatTranscript";
-import { PhoneOff, Send } from "lucide-react";
+import { PhoneOff, Send, Timer } from "lucide-react";
 
 type Phase = "loading" | "asking" | "listening" | "thinking" | "done" | "error";
 
 const SILENCE_MS = 1800;
+
+function personaLabel(persona?: Persona) {
+  if (!persona || persona === "general") return null;
+  return PANEL_PERSONAS.find((p) => p.id === persona)?.label || null;
+}
 
 export default function InterviewPage() {
   const router = useRouter();
@@ -27,6 +32,8 @@ export default function InterviewPage() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [camError, setCamError] = useState<string | null>(null);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
+  const [currentPersona, setCurrentPersona] = useState<Persona | undefined>(undefined);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -115,7 +122,7 @@ export default function InterviewPage() {
   }, [transcript, interimText]);
 
   const speak = useCallback(
-    (text: string): Promise<void> => {
+    (text: string, persona?: Persona): Promise<void> => {
       return new Promise((resolve) => {
         if (!("speechSynthesis" in window)) {
           resolve();
@@ -127,7 +134,8 @@ export default function InterviewPage() {
           utter.rate = 1;
           utter.pitch = 1;
           const voices = window.speechSynthesis.getVoices();
-          const match = findVoiceByName(voices, setup?.voiceName);
+          const voiceName = setup ? resolveVoiceName(setup, persona) : undefined;
+          const match = findVoiceByName(voices, voiceName);
           if (match) utter.voice = match;
           utter.onend = () => resolve();
           utter.onerror = () => resolve();
@@ -192,26 +200,28 @@ export default function InterviewPage() {
   }
 
   const askQuestion = useCallback(
-    async (text: string) => {
+    async (text: string, persona?: Persona) => {
       setPhase("asking");
-      appendTranscript({ role: "ai", text });
-      await speak(text);
+      setCurrentPersona(persona);
+      appendTranscript({ role: "ai", text, persona });
+      await speak(text, persona);
       setInterimText("");
       finalTranscriptRef.current = "";
       lastSpeechAtRef.current = Date.now();
       autoSubmittedRef.current = false;
       setManualAnswer("");
+      setRemainingSeconds(setup?.timedMode ? setup.secondsPerQuestion ?? 120 : null);
       setPhase("listening");
       startListening();
     },
-    [speak]
+    [speak, setup]
   );
 
   // Kick off the interview once setup + questions are loaded
   useEffect(() => {
     if (setup && questions.length > 0 && !startedRef.current) {
       startedRef.current = true;
-      askQuestion(questions[0].text);
+      askQuestion(questions[0].text, questions[0].persona);
     }
   }, [setup, questions, askQuestion]);
 
@@ -263,14 +273,20 @@ export default function InterviewPage() {
       pendingTranscriptRef.current = null;
 
       if (data.type === "end") {
-        appendTranscript({ role: "ai", text: data.aiText });
-        await speak(data.aiText);
+        const closingPersona: Persona | undefined = setup.interviewMode === "panel" ? "hiring_manager" : undefined;
+        setCurrentPersona(closingPersona);
+        appendTranscript({ role: "ai", text: data.aiText, persona: closingPersona });
+        await speak(data.aiText, closingPersona);
         finishInterview();
         return;
       }
 
+      // "next" moves to a new planned question (persona comes from that question);
+      // "followup" stays on the current planned question and its persona.
+      const persona = data.type === "next" ? questions[data.nextIndex]?.persona : questions[plannedIndex]?.persona;
+
       setPlannedIndex(data.nextIndex);
-      askQuestion(data.aiText);
+      askQuestion(data.aiText, persona);
     } catch (err) {
       // Surface the error and stop — no silent auto-retry loop. The candidate (or the
       // Retry button) decides what happens next, so we never hammer the API repeatedly.
@@ -324,6 +340,22 @@ export default function InterviewPage() {
     return () => clearInterval(interval);
   }, [phase, speechSupported]);
 
+  // Timed mode: count down while listening and force a submit (whatever's been said so
+  // far) once time runs out. Shares autoSubmittedRef with the silence-based auto-submit
+  // so the two mechanisms can never both fire for the same answer.
+  useEffect(() => {
+    if (phase !== "listening" || !setup?.timedMode || remainingSeconds === null) return;
+    if (remainingSeconds <= 0) {
+      if (!autoSubmittedRef.current) {
+        autoSubmittedRef.current = true;
+        submitAnswerRef.current();
+      }
+      return;
+    }
+    const timeout = setTimeout(() => setRemainingSeconds((s) => (s === null ? null : s - 1)), 1000);
+    return () => clearTimeout(timeout);
+  }, [phase, setup?.timedMode, remainingSeconds]);
+
   function endEarly() {
     stopListening();
     try {
@@ -355,16 +387,35 @@ export default function InterviewPage() {
             Question {Math.min(progress + 1, questions.length)} of {questions.length}
           </p>
         </div>
-        {phase !== "done" && (
-          <button onClick={endEarly} className="btn-secondary text-sm">
-            <PhoneOff size={15} /> End interview
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {phase === "listening" && setup.timedMode && remainingSeconds !== null && (
+            <span
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium ${
+                remainingSeconds <= 10
+                  ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  : "border-slate-700 bg-slate-900/60 text-slate-300"
+              }`}
+            >
+              <Timer size={14} />
+              {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, "0")}
+            </span>
+          )}
+          {phase !== "done" && (
+            <button onClick={endEarly} className="btn-secondary text-sm">
+              <PhoneOff size={15} /> End interview
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-5">
         <div className="md:col-span-2 flex flex-col gap-4">
           <div className="card flex flex-col items-center justify-center gap-4 py-8">
+            {personaLabel(currentPersona) && (
+              <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-medium uppercase tracking-wide text-indigo-300">
+                {personaLabel(currentPersona)}
+              </span>
+            )}
             <AIOrb phase={phase} />
           </div>
           <div className="card overflow-hidden p-0">

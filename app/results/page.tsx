@@ -1,11 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sessionStore } from "@/lib/session-store";
-import { FeedbackReport, TailoredResume } from "@/lib/types";
+import { FeedbackReport, TailoredResume, PlannedQuestion } from "@/lib/types";
 import FeedbackReportView from "@/components/FeedbackReportView";
-import { Download, RotateCcw, Sparkles } from "lucide-react";
+import TailoredResumeView from "@/components/TailoredResumeView";
+import { Download, RotateCcw, Sparkles, Save, LogIn, CheckCircle2, Target } from "lucide-react";
+import Link from "next/link";
+
+// Picks the planned question that best matches the lowest-scoring feedback category, so
+// "retry weakest area" practices something concretely tied to what went wrong.
+function findWeakestQuestion(feedback: FeedbackReport, questions: PlannedQuestion[]) {
+  if (!feedback.categoryScores?.length || !questions.length) return null;
+  const weakest = [...feedback.categoryScores].sort((a, b) => a.score - b.score)[0];
+  const norm = (s: string) => s.toLowerCase().trim();
+  const match =
+    questions.find((q) => norm(q.category) === norm(weakest.category)) ||
+    questions.find((q) => norm(q.category).includes(norm(weakest.category)) || norm(weakest.category).includes(norm(q.category))) ||
+    questions[0];
+  return { question: match, categoryScore: weakest };
+}
+
+type SaveStatus = "idle" | "saving" | "saved" | "signin_required" | "error";
 
 export default function ResultsPage() {
   const router = useRouter();
@@ -14,6 +31,8 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const attemptedSaveRef = useRef(false);
 
   useEffect(() => {
     const setup = sessionStore.getSetup();
@@ -63,6 +82,42 @@ export default function ResultsPage() {
     })();
   }, [router]);
 
+  // Once feedback + resume are ready, try saving this interview to the user's history.
+  // Guarded so a re-render (or a page refresh that finds a previously-saved id) never
+  // creates a duplicate row.
+  useEffect(() => {
+    if (!feedback || !resume || attemptedSaveRef.current) return;
+
+    const existingId = sessionStore.getSavedInterviewId();
+    if (existingId) {
+      setSaveStatus("saved");
+      return;
+    }
+
+    attemptedSaveRef.current = true;
+    const setup = sessionStore.getSetup();
+    const transcript = sessionStore.getTranscript();
+    if (!setup || !transcript) return;
+
+    setSaveStatus("saving");
+    fetch("/api/save-interview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ setup, transcript, feedback, tailoredResume: resume }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (res.status === 401) {
+          setSaveStatus("signin_required");
+          return;
+        }
+        if (!res.ok) throw new Error(data.error || "Failed to save");
+        sessionStore.setSavedInterviewId(data.id);
+        setSaveStatus("saved");
+      })
+      .catch(() => setSaveStatus("error"));
+  }, [feedback, resume]);
+
   async function downloadResume() {
     if (!resume) return;
     setDownloading(true);
@@ -92,6 +147,15 @@ export default function ResultsPage() {
     router.push("/");
   }
 
+  function retryWeakestQuestion() {
+    if (!feedback) return;
+    const questions = sessionStore.getQuestions() || [];
+    const weakest = findWeakestQuestion(feedback, questions);
+    if (!weakest) return;
+    sessionStore.setRetryQuestion({ question: weakest.question, originalScore: weakest.categoryScore.score });
+    router.push("/interview/retry");
+  }
+
   if (loading) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-24 text-center">
@@ -117,12 +181,46 @@ export default function ResultsPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-10">
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Your Results</h1>
         <button onClick={startOver} className="btn-secondary text-sm">
           <RotateCcw size={15} /> Start New Interview
         </button>
       </div>
+
+      {saveStatus === "signin_required" && (
+        <div className="mb-6 flex items-center justify-between rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm">
+          <span className="text-indigo-200">Sign in to save this interview and revisit it later.</span>
+          <Link href="/login?next=/results" className="btn-secondary shrink-0 text-xs">
+            <LogIn size={13} /> Sign in
+          </Link>
+        </div>
+      )}
+      {saveStatus === "saving" && (
+        <div className="mb-6 flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-3 text-sm text-slate-400">
+          <Save size={14} className="animate-pulse" /> Saving to your history...
+        </div>
+      )}
+      {saveStatus === "saved" && (
+        <div className="mb-6 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+          <CheckCircle2 size={14} /> Saved to your interview history.
+        </div>
+      )}
+
+      {feedback && (() => {
+        const weakest = findWeakestQuestion(feedback, sessionStore.getQuestions() || []);
+        return weakest ? (
+          <div className="mb-6 flex flex-col items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <span className="flex items-start gap-2 text-amber-200 sm:items-center">
+              <Target size={15} className="mt-0.5 shrink-0 sm:mt-0" />
+              Weakest area: <strong className="font-semibold">{weakest.categoryScore.category}</strong> ({weakest.categoryScore.score}/100). Want another shot at it?
+            </span>
+            <button onClick={retryWeakestQuestion} className="btn-secondary shrink-0 text-xs">
+              Retry this question →
+            </button>
+          </div>
+        ) : null;
+      })()}
 
       {feedback && <FeedbackReportView report={feedback} />}
 
@@ -134,53 +232,7 @@ export default function ResultsPage() {
               <Download size={15} /> {downloading ? "Preparing..." : "Download as Word (.docx)"}
             </button>
           </div>
-          {resume.contact && (resume.contact.name || resume.contact.email || resume.contact.phone) && (
-            <div className="mb-4 border-b border-slate-800/80 pb-4">
-              {resume.contact.name && <p className="text-base font-semibold text-slate-100">{resume.contact.name}</p>}
-              <p className="mt-1 text-xs text-slate-500">
-                {[resume.contact.email, resume.contact.phone, resume.contact.location, ...(resume.contact.links || [])]
-                  .filter(Boolean)
-                  .join("  ·  ")}
-              </p>
-            </div>
-          )}
-
-          <p className="mb-4 text-sm italic text-slate-400">{resume.summary}</p>
-
-          {resume.sections.map((s, i) => (
-            <div key={i} className="mb-4">
-              <h3 className="mb-2 font-medium text-slate-200">{s.heading}</h3>
-              {s.entries && s.entries.length > 0 ? (
-                <div className="space-y-3">
-                  {s.entries.map((entry, ei) => (
-                    <div key={ei}>
-                      <p className="text-sm font-medium text-slate-300">{entry.subheading}</p>
-                      <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-400">
-                        {entry.bullets.map((b, j) => (
-                          <li key={j}>{b}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <ul className="list-disc space-y-1 pl-5 text-sm text-slate-300">
-                  {(s.bullets || []).map((b, j) => (
-                    <li key={j}>{b}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-          {resume.keywordsAligned?.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {resume.keywordsAligned.map((k, i) => (
-                <span key={i} className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs text-indigo-300">
-                  {k}
-                </span>
-              ))}
-            </div>
-          )}
+          <TailoredResumeView resume={resume} />
         </div>
       )}
     </main>

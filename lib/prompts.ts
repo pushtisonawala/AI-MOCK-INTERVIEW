@@ -1,6 +1,38 @@
 import { SessionSetup, PlannedQuestion, TranscriptTurn } from "./types";
 
+export function retryQuestionPrompt(setup: SessionSetup, question: PlannedQuestion, answer: string, previousScore: number): string {
+  return `You are a blunt, expert interview coach. The candidate is re-practicing ONE specific interview question after scoring low on similar questions in a previous mock interview for the role of "${setup.role}"${
+    setup.company ? ` at ${setup.company}` : ""
+  }. Grade ONLY this single answer, on its own merits.
+
+Job description:
+"""
+${setup.jobDescription}
+"""
+
+Question category: ${question.category}
+Question asked: "${question.text}"
+
+Candidate's previous attempt at a similar question scored ${previousScore}/100.
+
+Candidate's new answer:
+"""
+${answer || "(no answer given)"}
+"""
+
+Grade this answer honestly on relevance, structure (STAR method if behavioral), specificity, and clarity. Do not go easy on it just because it's a retry — if it's still vague or thin, score it accordingly (well under 50). If it's genuinely detailed and well-structured, score 80+.
+
+Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
+{
+  "score": number (0-100, honest grade of THIS answer alone),
+  "comment": string (2-3 sentences, specific to what they just said, direct and constructive),
+  "improvedTip": string (one concrete, specific thing to adjust next time)
+}`;
+}
+
 export function questionsPrompt(setup: SessionSetup): string {
+  const isPanel = setup.interviewMode === "panel";
+
   return `You are an expert interviewer preparing a mock interview.
 
 Job title: ${setup.role}
@@ -22,11 +54,24 @@ Mix question categories appropriately for a "${setup.difficulty}" interview:
 - "behavioral" = mostly behavioral/situational (STAR-style) questions
 - "technical" = mostly role-specific technical/skills questions
 - "mixed" = a balanced mix of both, plus one opening icebreaker and one closing question
-
+${
+  setup.company
+    ? `\nThe candidate is interviewing at "${setup.company}" specifically. If you have genuine knowledge of how this company or organizations like it typically run interviews (e.g. a company known for leadership-principle-style behavioral questions, a consulting firm that uses case interviews, a startup that focuses on practical/hands-on problem solving), let that authentically shape the style and substance of these questions. If you don't have specific knowledge of this company's interview style, just write strong, realistic questions for the role and industry — do not fabricate or guess at specific company practices you're not confident about.\n`
+    : ""
+}
+${
+  isPanel
+    ? `\nThis is a PANEL interview with three interviewers, each asking questions in their lane. For every question, also assign a "persona" field, exactly one of:
+- "technical" — a technical/skills-focused interviewer; assign role-specific technical or problem-solving questions here
+- "behavioral" — an HR/behavioral interviewer; assign STAR-style behavioral and situational questions here
+- "hiring_manager" — the hiring manager; assign the opening icebreaker, culture/motivation questions, and the closing question here
+Distribute questions reasonably across all three personas rather than clustering them all on one.\n`
+    : ""
+}
 Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
 {
   "questions": [
-    { "id": string, "category": string, "text": string }
+    { "id": string, "category": string, "text": string${isPanel ? ', "persona": "technical" | "behavioral" | "hiring_manager"' : ""} }
   ]
 }`;
 }
@@ -41,6 +86,8 @@ export function interviewTurnPrompt(
   const history = transcript
     .map((t) => `${t.role === "ai" ? "Interviewer" : "Candidate"}: ${t.text}`)
     .join("\n");
+  const isPanel = setup.interviewMode === "panel";
+  const currentPersona = plannedQuestions[currentIndex]?.persona;
 
   return `You are an AI interviewer conducting a live, natural, real-time mock interview for the role of "${setup.role}"${
     setup.company ? ` at ${setup.company}` : ""
@@ -50,9 +97,13 @@ Job description:
 """
 ${setup.jobDescription}
 """
-
+${
+  isPanel
+    ? `\nThis is a PANEL interview — three interviewers (technical, behavioral/HR, hiring manager) are taking turns. The current question belongs to the "${currentPersona || "general"}" interviewer, so match that persona's voice: technical = direct and skills-focused, behavioral = warm and probing for real examples, hiring_manager = big-picture and motivation-focused. When asking a follow-up, stay in the SAME persona as the current question.\n`
+    : ""
+}
 Planned question queue (ask these in order; you may ask ONE short natural follow-up before moving on if the candidate's last answer was vague or worth probing deeper):
-${upcoming.map((q, i) => `${i === 0 ? "-> NEXT PLANNED: " : "-  "}[${q.category}] ${q.text}`).join("\n")}
+${upcoming.map((q, i) => `${i === 0 ? "-> NEXT PLANNED: " : "-  "}[${q.category}${q.persona ? `/${q.persona}` : ""}] ${q.text}`).join("\n")}
 
 Conversation so far:
 ${history || "(interview just started, nothing said yet)"}
@@ -156,6 +207,8 @@ For each section in the resume, decide whether it is:
 
 Within Experience/Projects bullets specifically: rewrite the phrasing to emphasize accomplishments and terminology that genuinely match the job description (mirroring its keywords where they truthfully apply to what the candidate actually did) — do not change what actually happened.
 
+Also compute an ATS keyword-match assessment: extract the 15-25 most important skills/keywords/qualifications from the job description (tools, technologies, certifications, domain terms, soft-skill phrases the JD explicitly emphasizes), then check which of those genuinely appear (verbatim or as a clear synonym) in the CANDIDATE'S ORIGINAL resume text provided above — not in the tailored rewrite, since rewriting can't invent real experience. Report the honest overlap.
+
 Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
 {
   "contact": { "name": string, "email": string, "phone": string, "location": string, "links": string[] },
@@ -168,7 +221,12 @@ Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
     }
   ],
   "keywordsAligned": string[] (key JD keywords/skills now reflected in the resume),
-  "rawText": string (the complete tailored resume as clean plain text, ready to read top to bottom exactly as a plain-text ATS-friendly resume would look, including the contact header)
+  "rawText": string (the complete tailored resume as clean plain text, ready to read top to bottom exactly as a plain-text ATS-friendly resume would look, including the contact header),
+  "atsMatch": {
+    "score": number (0-100, honest % of the important JD keywords that the ORIGINAL resume genuinely covers — do not inflate this; a partial or missing background should score low),
+    "matchedKeywords": string[] (JD keywords the candidate's real background already covers),
+    "missingKeywords": string[] (important JD keywords/skills the candidate's resume does not show — real gaps worth addressing, not padding)
+  }
 }
 
 Remember: for every section object, populate ONLY "entries" (multi-entry section) OR ONLY "bullets" (flat section) — never both, never neither.`;

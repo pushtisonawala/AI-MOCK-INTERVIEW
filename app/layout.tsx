@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import StepNav from "@/components/StepNav";
+import UserMenu from "@/components/UserMenu";
+import { createClient } from "@/lib/supabase/server";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -11,7 +13,22 @@ export const metadata: Metadata = {
     "Practice real-time AI-driven mock interviews tailored to any job description, then get feedback and a tailored resume.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+async function getUserEmail(): Promise<string | null> {
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.email ?? null;
+  } catch {
+    // Supabase isn't configured yet — the app still works, just without saved history.
+    return null;
+  }
+}
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const email = await getUserEmail();
+
   return (
     <html lang="en">
       <body className={`${inter.className} relative min-h-screen bg-slate-950 text-slate-100`}>
@@ -22,6 +39,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             style={{ animationDelay: "3s" }}
           />
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(30,41,59,0.4),transparent_60%)]" />
+        </div>
+        <div className="absolute right-6 top-6 z-10">
+          <UserMenu email={email} />
         </div>
         <StepNav />
         {children}

@@ -8,6 +8,9 @@ const KEYS = {
   transcript: "ami_transcript",
   feedback: "ami_feedback",
   resume: "ami_tailored_resume",
+  savedInterviewId: "ami_saved_interview_id",
+  retryQuestion: "ami_retry_question",
+  retryOriginalScore: "ami_retry_original_score",
 } as const;
 
 function set<T>(key: string, value: T) {
@@ -41,6 +44,23 @@ export const sessionStore = {
 
   setTailoredResume: (v: TailoredResume) => set(KEYS.resume, v),
   getTailoredResume: () => get<TailoredResume>(KEYS.resume),
+
+  setSavedInterviewId: (v: string) => set(KEYS.savedInterviewId, v),
+  getSavedInterviewId: () => get<string>(KEYS.savedInterviewId),
+
+  // Retry-the-weak-question mode: a single question queued up for focused re-practice,
+  // plus the score it originally got so the retry result can show improvement.
+  setRetryQuestion: (v: { question: PlannedQuestion; originalScore: number }) => {
+    set(KEYS.retryQuestion, v.question);
+    set(KEYS.retryOriginalScore, v.originalScore);
+  },
+  getRetryQuestion: () => get<PlannedQuestion>(KEYS.retryQuestion),
+  getRetryOriginalScore: () => get<number>(KEYS.retryOriginalScore),
+  clearRetry: () => {
+    if (typeof window === "undefined") return;
+    sessionStorage.removeItem(KEYS.retryQuestion);
+    sessionStorage.removeItem(KEYS.retryOriginalScore);
+  },
 
   clearAll: () => {
     if (typeof window === "undefined") return;

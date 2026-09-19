@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { sessionStore } from "@/lib/session-store";
 import { findVoiceByName, resolveVoiceName } from "@/lib/voice";
-import { PlannedQuestion, SessionSetup, TranscriptTurn, InterviewTurnResponse, Persona, PANEL_PERSONAS } from "@/lib/types";
+import { KbSource, PlannedQuestion, SessionSetup, TranscriptTurn, InterviewTurnResponse, Persona, PANEL_PERSONAS } from "@/lib/types";
 import AIOrb from "@/components/AIOrb";
 import MicLevel from "@/components/MicLevel";
 import ChatTranscript from "@/components/ChatTranscript";
@@ -200,10 +200,10 @@ export default function InterviewPage() {
   }
 
   const askQuestion = useCallback(
-    async (text: string, persona?: Persona) => {
+    async (text: string, persona?: Persona, reasoning?: string, sources?: KbSource[]) => {
       setPhase("asking");
       setCurrentPersona(persona);
-      appendTranscript({ role: "ai", text, persona });
+      appendTranscript({ role: "ai", text, persona, reasoning, sources });
       await speak(text, persona);
       setInterimText("");
       finalTranscriptRef.current = "";
@@ -221,7 +221,7 @@ export default function InterviewPage() {
   useEffect(() => {
     if (setup && questions.length > 0 && !startedRef.current) {
       startedRef.current = true;
-      askQuestion(questions[0].text, questions[0].persona);
+      askQuestion(questions[0].text, questions[0].persona, questions[0].rationale, questions[0].sources);
     }
   }, [setup, questions, askQuestion]);
 
@@ -275,7 +275,7 @@ export default function InterviewPage() {
       if (data.type === "end") {
         const closingPersona: Persona | undefined = setup.interviewMode === "panel" ? "hiring_manager" : undefined;
         setCurrentPersona(closingPersona);
-        appendTranscript({ role: "ai", text: data.aiText, persona: closingPersona });
+        appendTranscript({ role: "ai", text: data.aiText, persona: closingPersona, reasoning: data.reasoning });
         await speak(data.aiText, closingPersona);
         finishInterview();
         return;
@@ -286,7 +286,7 @@ export default function InterviewPage() {
       const persona = data.type === "next" ? questions[data.nextIndex]?.persona : questions[plannedIndex]?.persona;
 
       setPlannedIndex(data.nextIndex);
-      askQuestion(data.aiText, persona);
+      askQuestion(data.aiText, persona, data.reasoning, questions[data.type === "next" ? data.nextIndex : plannedIndex]?.sources);
     } catch (err) {
       // Surface the error and stop — no silent auto-retry loop. The candidate (or the
       // Retry button) decides what happens next, so we never hammer the API repeatedly.

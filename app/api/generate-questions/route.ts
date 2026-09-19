@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateJSON } from "@/lib/ai";
 import { questionsPrompt } from "@/lib/prompts";
 import { SessionSetup, PlannedQuestion, Persona } from "@/lib/types";
+import { retrieve, formatForPrompt, toSource, RetrievedChunk } from "@/lib/rag/retriever";
 
 export const runtime = "nodejs";
 
@@ -24,16 +25,36 @@ export async function POST(req: NextRequest) {
     }
 
     const isPanel = setup.interviewMode === "panel";
-    const prompt = questionsPrompt(setup);
-    const data = await generateJSON<{ questions: { id?: string; category?: string; text: string; persona?: string }[] }>(
-      prompt
-    );
+    // RAG: retrieve reference material relevant to this role / JD (and company, if named).
+    // Retrieval failures must never block the interview, so they degrade to "no references".
+    let retrieved: RetrievedChunk[] = [];
+    try {
+      const main = await retrieve(`${setup.role} ${setup.company || ""} ${setup.jobDescription.slice(0, 1200)}`, { k: 8 });
+      retrieved = main.chunks;
+      if (setup.company) {
+        const style = await retrieve(`${setup.company} interview style`, { k: 2, types: ["company_style"], minScore: 0.15 });
+        retrieved = [...retrieved, ...style.chunks.filter((c) => !retrieved.some((r) => r.id === c.id))];
+      }
+    } catch (err) {
+      console.warn("generate-questions: retrieval failed, continuing without RAG", err);
+    }
+
+    const prompt = questionsPrompt(setup, retrieved.length ? formatForPrompt(retrieved) : "");
+    const data = await generateJSON<{
+      questions: { id?: string; category?: string; text: string; persona?: string; rationale?: string; evidence?: string[]; sources?: string[] }[];
+    }>(prompt);
 
     const raw = data.questions || [];
     const questions: PlannedQuestion[] = raw.map((q, i) => ({
       id: q.id || `q${i + 1}`,
       category: q.category || "general",
       text: q.text,
+      rationale: typeof q.rationale === "string" ? q.rationale : undefined,
+      evidence: Array.isArray(q.evidence) ? q.evidence.filter((e) => typeof e === "string").slice(0, 3) : undefined,
+      // Only accept source ids that were actually retrieved — never trust ids the model invents.
+      sources: Array.isArray(q.sources)
+        ? retrieved.filter((c) => q.sources!.includes(c.id)).map(toSource)
+        : undefined,
       persona: isPanel
         ? VALID_PERSONAS.includes(q.persona as Persona)
           ? (q.persona as Persona)

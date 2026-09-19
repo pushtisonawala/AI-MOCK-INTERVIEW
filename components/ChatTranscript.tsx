@@ -16,7 +16,7 @@ export default function ChatTranscript({
   return (
     <div className="flex flex-col gap-3">
       {turns.map((t, i) => (
-        <Bubble key={i} role={t.role} text={t.text} persona={t.persona} />
+        <Bubble key={i} role={t.role} text={t.text} persona={t.persona} reasoning={t.reasoning} sources={t.sources} />
       ))}
       {interim && <Bubble role="user" text={interim} pending />}
     </div>
@@ -28,11 +28,15 @@ function Bubble({
   text,
   pending,
   persona,
+  reasoning,
+  sources,
 }: {
   role: "ai" | "user";
   text: string;
   pending?: boolean;
   persona?: string;
+  reasoning?: string;
+  sources?: { id: string; title: string }[];
 }) {
   const isAi = role === "ai";
   const label = isAi ? personaLabel(persona) : null;
@@ -54,6 +58,22 @@ function Bubble({
         >
           {text}
         </div>
+        {isAi && (reasoning || (sources && sources.length > 0)) && (
+          <details className="group mt-1 pl-1 text-xs text-slate-500">
+            <summary className="cursor-pointer select-none list-none text-indigo-400/80 hover:text-indigo-300">
+              Why this question?
+            </summary>
+            <p className="mt-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 leading-relaxed text-slate-400">
+              {reasoning}
+              {sources && sources.length > 0 && (
+                <span className="mt-1.5 block text-[11px] text-slate-500">
+                  Inspired by knowledge-base entries:{" "}
+                  {sources.map((src) => `${src.id} “${src.title.length > 48 ? src.title.slice(0, 48) + "…" : src.title}”`).join(" · ")}
+                </span>
+              )}
+            </p>
+          </details>
+        )}
       </div>
     </div>
   );

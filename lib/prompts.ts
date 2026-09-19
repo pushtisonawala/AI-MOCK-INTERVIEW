@@ -1,5 +1,10 @@
 import { SessionSetup, PlannedQuestion, TranscriptTurn } from "./types";
 
+export interface FeedbackPromptContext {
+  metricsBlock?: string; // measured NLP signals (computed by code)
+  referenceBlock?: string; // RAG-retrieved reference guidance
+}
+
 export function retryQuestionPrompt(setup: SessionSetup, question: PlannedQuestion, answer: string, previousScore: number): string {
   return `You are a blunt, expert interview coach. The candidate is re-practicing ONE specific interview question after scoring low on similar questions in a previous mock interview for the role of "${setup.role}"${
     setup.company ? ` at ${setup.company}` : ""
@@ -26,11 +31,13 @@ Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
 {
   "score": number (0-100, honest grade of THIS answer alone),
   "comment": string (2-3 sentences, specific to what they just said, direct and constructive),
-  "improvedTip": string (one concrete, specific thing to adjust next time)
+  "whyThisScore": string (2-3 sentences of reasoning: which parts of the answer earned points, which cost points, and what evidence in the answer supports that),
+  "improvedTip": string (one concrete, specific thing to adjust next time),
+  "idealAnswer": string (a strong 90-150 word spoken-style answer to this question, first person, built ONLY from facts in the resume/job description above — where a real detail such as a metric is unknown, write it as a bracketed placeholder like [your metric] instead of inventing it)
 }`;
 }
 
-export function questionsPrompt(setup: SessionSetup): string {
+export function questionsPrompt(setup: SessionSetup, referenceBlock = ""): string {
   const isPanel = setup.interviewMode === "panel";
 
   return `You are an expert interviewer preparing a mock interview.
@@ -46,7 +53,11 @@ ${setup.jobDescription}
 """
 
 ${setup.resumeText ? `Candidate resume:\n"""\n${setup.resumeText}\n"""\n` : ""}
-
+${
+  referenceBlock
+    ? `Reference material retrieved from our interview knowledge base (representative questions with the key points a correct answer contains, answer guidance, and known company interview styles). Use it as inspiration for style and depth, and to keep the questions realistic — do NOT copy questions verbatim; adapt them to this job description and candidate:\n"""\n${referenceBlock}\n"""\n`
+    : ""
+}
 Generate a list of exactly ${setup.numQuestions} interview questions tailored specifically to this job description${
     setup.resumeText ? " and the candidate's background" : ""
   }.
@@ -71,9 +82,21 @@ Distribute questions reasonably across all three personas rather than clustering
 Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
 {
   "questions": [
-    { "id": string, "category": string, "text": string${isPanel ? ', "persona": "technical" | "behavioral" | "hiring_manager"' : ""} }
+    { "id": string, "category": string, "text": string${isPanel ? ', "persona": "technical" | "behavioral" | "hiring_manager"' : ""}, "rationale": string, "evidence": string[]${referenceBlock ? ', "sources": string[]' : ""} }
   ]
-}`;
+}
+
+For every question also explain your reasoning, so the candidate can see WHY it was asked:
+- "rationale": one or two sentences — what the interviewer is trying to learn and why it matters for this role.
+- "evidence": 1-3 short items naming the exact job-description requirement${
+    setup.resumeText ? " and/or resume item" : ""
+  } that triggered the question, quoted or closely paraphrased (e.g. "JD: 'experience with REST APIs'"${
+    setup.resumeText ? `, "Resume: internship at Acme building a payments service"` : ""
+  }). Only cite things that really appear in the text above — never invent evidence.${
+    referenceBlock
+      ? `\n- "sources": the ids (e.g. "DSA-04") of the reference-material entries that genuinely influenced this question; use [] if it was written from the job description alone. Only use ids that appear in the reference material above.`
+      : ""
+  }`;
 }
 
 export function interviewTurnPrompt(
@@ -118,11 +141,17 @@ Return ONLY valid JSON, no markdown, no commentary:
 {
   "type": "followup" | "next" | "end",
   "aiText": string,
-  "nextIndex": number
+  "nextIndex": number,
+  "reasoning": string (ONE sentence explaining why you chose this move — e.g. what was vague or missing in the candidate's last answer that led to a follow-up, or why the answer was sufficient to move on)
 }`;
 }
 
-export function feedbackPrompt(setup: SessionSetup, transcript: TranscriptTurn[]): string {
+export function feedbackPrompt(
+  setup: SessionSetup,
+  transcript: TranscriptTurn[],
+  plannedQuestions: PlannedQuestion[] = [],
+  ctx: FeedbackPromptContext = {}
+): string {
   const history = transcript
     .map((t, i) => `${t.role === "ai" ? "Interviewer" : "Candidate"} [turn ${i + 1}]: ${t.text}`)
     .join("\n");
@@ -130,6 +159,10 @@ export function feedbackPrompt(setup: SessionSetup, transcript: TranscriptTurn[]
   const candidateWordCount = transcript
     .filter((t) => t.role === "user")
     .reduce((sum, t) => sum + t.text.trim().split(/\s+/).filter(Boolean).length, 0);
+
+  const askedList = plannedQuestions.length
+    ? plannedQuestions.map((q, i) => `${i + 1}. [${q.category}] ${q.text}`).join("\n")
+    : "(not provided — derive the questions from the interviewer turns in the transcript)";
 
   return `You are a blunt, expert interview coach grading ONE specific candidate's ONE specific mock interview for the role of "${setup.role}"${
     setup.company ? ` at ${setup.company}` : ""
@@ -140,13 +173,26 @@ Job description:
 ${setup.jobDescription}
 """
 
+${setup.resumeText ? `Candidate resume (the ONLY source of facts you may use when writing model answers):\n"""\n${setup.resumeText}\n"""\n` : "No resume was provided, so model answers must use bracketed placeholders for personal details."}
+
+Planned questions for this interview:
+${askedList}
+
 Full transcript (numbered so you can reference specific turns):
 """
 ${history || "(the candidate gave no answers)"}
 """
 
 The candidate spoke approximately ${candidateWordCount} words in total across all their answers.
-
+${
+  ctx.metricsBlock
+    ? `\nMEASURED SIGNALS — computed by code (NLP + embeddings), not by you. Treat them as facts and make your feedback consistent with them; if your reading of a transcript disagrees with a number, say why:\n${ctx.metricsBlock}\n`
+    : ""
+}${
+  ctx.referenceBlock
+    ? `\nREFERENCE GUIDANCE retrieved from our interview knowledge base (the key points a correct, strong answer to similar questions contains, plus general scoring guidance). Use the key points to judge the TECHNICAL ACCURACY and completeness of the candidate's answer — if they state something that contradicts a key point, say so explicitly:\n"""\n${ctx.referenceBlock}\n"""\n`
+    : ""
+}
 HARD RULES — follow these exactly:
 1. Every strength and weakness MUST reference or closely paraphrase something the candidate actually said (quote a short phrase or describe the specific moment/turn number). Do not write generic advice like "be more confident" or "use the STAR method" without tying it to a specific answer in this transcript.
 2. Scores must genuinely reflect what happened, not cluster in a safe 65-80 range out of habit:
@@ -156,20 +202,35 @@ HARD RULES — follow these exactly:
    - If the candidate barely answered anything (very low word count, one-word answers, or ended the interview almost immediately), the overall score should be low (well under 40) and the feedback should state plainly that there wasn't enough substance to evaluate well — do not inflate this to be encouraging.
 3. Vary your language and structure based on what actually happened — do not reuse boilerplate phrasing across different candidates or interviews.
 4. categoryScores should be based on the actual question categories that came up in this transcript (e.g. if it was mostly behavioral questions, focus there), not a fixed generic list.
+5. EXPLAIN YOUR REASONING. Every score must be traceable: "scoreRationale" must show how the overall score follows from the per-question evidence (name the strongest and weakest answers and how they pulled the score up or down). Each entry in "questionReviews" must contain "answerEvidence" (a short quote or close paraphrase of what the candidate actually said, or "(no answer)") and "whyThisScore" reasoning that points at that evidence and at the job description.
+6. MODEL ANSWERS. For each planned question that was actually asked in the transcript, write an "idealAnswer": a strong, natural, first-person answer of 90-150 words that this candidate could genuinely give. Build it ONLY from facts in the resume and their own transcript answers; reuse their real projects/skills, structured properly (STAR for behavioral, approach-then-tradeoffs for technical). NEVER invent employers, numbers, or achievements — where a real detail is missing, use a bracketed placeholder such as [your metric]. Do not copy the interviewer's wording; write it as the candidate would say it aloud.
 
 Evaluate: relevance/quality of content against the job description, use of the STAR method for behavioral answers, clarity and structure of communication, confidence, conciseness, and likely filler-word usage (infer from phrasing/repetition/hedging in the transcript, since this is text).
 
 Return ONLY valid JSON matching this exact shape, no markdown, no commentary:
 {
   "overallScore": number (0-100, must reflect the rules above),
+  "scoreRationale": string (3-4 sentences showing how the overall score was reached from the per-question evidence),
   "summary": string (2-3 sentences, direct and specific to this candidate, referencing at least one concrete moment from the transcript),
   "strengths": string[] (3-5 items, each grounded in a specific thing they said — quote or paraphrase it),
   "weaknesses": string[] (3-5 items, each grounded in a specific thing they said or failed to say),
   "starMethodFeedback": string (reference specific answers that did/didn't use STAR structure),
   "communicationFeedback": string,
-  "fillerWordsNote": string,
+  "fillerWordsNote": string (must cite the measured filler and hedging counts above),
   "categoryScores": [ { "category": string, "score": number (0-100), "note": string (reference the specific question/answer) } ],
-  "actionItems": string[] (3-5 concrete things to practice, tied to gaps actually observed in this transcript)
+  "actionItems": string[] (3-5 concrete things to practice, tied to gaps actually observed in this transcript),
+  "questionReviews": [
+    {
+      "question": string (the planned question text),
+      "category": string,
+      "score": number (0-100, for this answer alone),
+      "answerEvidence": string (short quote/paraphrase of the candidate's actual answer),
+      "whyThisScore": string (2-3 sentences of reasoning tied to the evidence and the job description),
+      "missing": string[] (1-3 specific things a strong answer would have included),
+      "idealAnswer": string (90-150 word model answer per rule 6),
+      "answerTips": string (one sentence: the framework/structure best suited to this question type)
+    }
+  ]
 }`;
 }
 

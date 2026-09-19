@@ -316,9 +316,21 @@ export default function RetryQuestionPage() {
               <ScoreDelta from={originalScore} to={result.score} />
             </div>
             <p className="text-sm text-slate-300">{result.comment}</p>
+            {result.whyThisScore && (
+              <p className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-400">
+                <span className="font-semibold text-slate-300">Why this score: </span>
+                {result.whyThisScore}
+              </p>
+            )}
             <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-sm text-indigo-200">
               Tip: {result.improvedTip}
             </div>
+            {result.idealAnswer && (
+              <details className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">
+                <summary className="cursor-pointer select-none font-semibold text-emerald-300">Show a model answer</summary>
+                <p className="mt-2 leading-relaxed text-emerald-100/90">{result.idealAnswer}</p>
+              </details>
+            )}
             <div className="flex justify-center gap-3 pt-2">
               <button onClick={tryAgain} className="btn-secondary">
                 <Repeat size={15} /> Try Again

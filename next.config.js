@@ -1,7 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ["pdf-parse", "mammoth"],
+    // Native / WASM-backed packages must not be bundled by webpack.
+    serverComponentsExternalPackages: ["pdf-parse", "mammoth", "@xenova/transformers", "onnxruntime-node", "sharp"],
   },
 };
 

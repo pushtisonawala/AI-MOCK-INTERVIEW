@@ -14,6 +14,17 @@ Everything here runs on free tiers only: no paid AI APIs, a free database, no ho
 - **Timed mode** — put a countdown on each question for realistic time-pressure practice.
 - **Shareable results link** — generate a read-only link to a saved interview's feedback and tailored resume, so a mentor or friend can review it without an account.
 
+## How the AI works (RAG + NLP + LLM)
+
+This is a hybrid system, not just an LLM call:
+- **RAG** — a curated 320-entry interview knowledge base with ~1,400 key points (`lib/rag/kb/`) is searched with hybrid dense (MiniLM embeddings) + TF-IDF retrieval; retrieved chunks are injected into the question-generation and grading prompts, and shown as sources in the UI.
+- **Classical NLP** (`lib/nlp.ts`) — filler/hedge detection, rule-based STAR detection, TF-IDF keyword extraction, lexical diversity. Measured numbers are given to the LLM as facts and displayed next to its grade.
+- **Sentence embeddings** (`lib/embeddings.ts`) — `all-MiniLM-L6-v2` via Transformers.js runs locally (free, ~25 MB download on first use, cached in `.model-cache/`). If it can't load, everything falls back to TF-IDF similarity.
+- **Explainability & verification** (`lib/analysis.ts`) — per-question "why" reasoning, quotes checked against the transcript, invented sources rejected, deterministic score sanity guard.
+- **Computed ATS match** (`lib/ats.ts`) — TF-IDF keywords vs the original resume, with semantic matching for synonyms.
+
+Run `npm run smoke` to exercise the non-LLM pipeline offline, and `npm run kb:check` to validate the knowledge base and measure retrieval recall. See `docs/PROJECT_GUIDE.md` for the full explanation and presentation script.
+
 ## Stack
 
 - **Next.js 14** (App Router) + **TypeScript** + **Tailwind CSS**

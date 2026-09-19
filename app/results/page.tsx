@@ -57,7 +57,7 @@ export default function ResultsPage() {
           fetch("/api/feedback", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ setup, transcript }),
+            body: JSON.stringify({ setup, transcript, plannedQuestions: sessionStore.getQuestions() || [] }),
           }),
           fetch("/api/tailor-resume", {
             method: "POST",

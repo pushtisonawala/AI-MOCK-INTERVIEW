@@ -74,6 +74,14 @@ function AtsMeter({ atsMatch }: { atsMatch: NonNullable<TailoredResume["atsMatch
       <p className="mt-2 text-xs text-slate-500">
         How much of the job description&apos;s key skills and keywords your original resume already covers.
       </p>
+      {atsMatch.method && (
+        <p className="mt-1 text-[11px] text-slate-600">
+          Computed, not estimated: {atsMatch.method}
+          {atsMatch.semanticMatches && atsMatch.semanticMatches.length > 0
+            ? `. Matched by meaning rather than exact wording: ${atsMatch.semanticMatches.join(", ")}.`
+            : "."}
+        </p>
+      )}
 
       {(atsMatch.matchedKeywords?.length > 0 || atsMatch.missingKeywords?.length > 0) && (
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
